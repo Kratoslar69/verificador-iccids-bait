@@ -266,6 +266,7 @@ class VerificadorICCID:
                       callback_progreso=None) -> Dict:
         """
         Procesar un lote de ICCIDs pendientes con control de estado
+        Procesa automáticamente en bloques de 1000 para superar limitación de Supabase
         
         Args:
             lote_nombre: Nombre del lote a procesar
@@ -283,27 +284,26 @@ class VerificadorICCID:
             "inicio": datetime.now()
         }
         
-        # Obtener ICCIDs pendientes del lote
-        query = self.supabase.table("verificacion_iccids").select("*").eq(
-            "lote", lote_nombre
-        ).eq("estatus", "PENDIENTE")
+        # Primero, contar el total de ICCIDs pendientes (sin límite)
+        count_response = self.supabase.table("verificacion_iccids").select(
+            "id", count="exact"
+        ).eq("lote", lote_nombre).eq("estatus", "PENDIENTE").execute()
         
-        if limite:
-            query = query.limit(limite)
+        total_pendientes = count_response.count if count_response.count else 0
         
-        response = query.execute()
-        iccids_pendientes = response.data
-        
-        if not iccids_pendientes:
+        if total_pendientes == 0:
             return {"error": "No hay ICCIDs pendientes en este lote"}
         
-        total = len(iccids_pendientes)
-        print(f"\n🚀 Iniciando verificación de {total} ICCIDs del lote '{lote_nombre}'")
-        print(f"⏱️  Tiempo estimado: {(total * self.delay_entre_verificaciones) / 60:.1f} minutos")
-        print(f"📊 Objetivo: 30,000 ICCIDs/día\n")
+        # Determinar cuántas ICCIDs procesar
+        total_a_procesar = min(limite, total_pendientes) if limite else total_pendientes
+        
+        print(f"\n🚀 Iniciando verificación de {total_a_procesar:,} ICCIDs del lote '{lote_nombre}'")
+        print(f"📄 Total pendientes en lote: {total_pendientes:,}")
+        print(f"⏱️  Tiempo estimado: {(total_a_procesar * self.delay_entre_verificaciones) / 60:.1f} minutos")
+        print(f"📊 Procesamiento en bloques de 1000 ICCIDs\n")
         
         # Inicializar proceso en la base de datos
-        self.inicializar_proceso(lote_nombre, total)
+        self.inicializar_proceso(lote_nombre, total_a_procesar)
         
         # Iniciar navegador
         with sync_playwright() as p:
@@ -315,78 +315,132 @@ class VerificadorICCID:
             page: Page = context.new_page()
             
             try:
-                for idx, registro in enumerate(iccids_pendientes, 1):
-                    # Verificar estado del proceso antes de continuar
+                # Procesar en bloques de 1000 ICCIDs
+                bloque_size = 1000
+                procesadas_global = 0
+                
+                while procesadas_global < total_a_procesar:
+                    # Verificar estado del proceso antes de consultar siguiente bloque
                     estado_proceso = self.obtener_estado_proceso(lote_nombre)
-                    
                     if estado_proceso == "DETENIDO":
                         print("\n⏹️  Proceso detenido por el usuario")
                         self.finalizar_proceso(lote_nombre, "DETENIDO")
                         break
                     
-                    # Si está pausado, esperar hasta que se reanude o detenga
-                    while estado_proceso == "PAUSADO":
-                        print(f"\n⏸️  Proceso pausado. Esperando...")
-                        time.sleep(2)
+                    # Calcular cuántas ICCIDs quedan por procesar
+                    restantes = total_a_procesar - procesadas_global
+                    limite_bloque = min(bloque_size, restantes)
+                    
+                    print(f"\n📦 Consultando bloque: {procesadas_global + 1} a {procesadas_global + limite_bloque}")
+                    
+                    # Obtener siguiente bloque de ICCIDs pendientes
+                    query = self.supabase.table("verificacion_iccids").select("*").eq(
+                        "lote", lote_nombre
+                    ).eq("estatus", "PENDIENTE").limit(limite_bloque)
+                    
+                    response = query.execute()
+                    iccids_bloque = response.data
+                    
+                    if not iccids_bloque:
+                        print("\n✅ No hay más ICCIDs pendientes")
+                        break
+                    
+                    print(f"✅ Bloque obtenido: {len(iccids_bloque)} ICCIDs")
+                    
+                    # Procesar cada ICCID del bloque
+                    for idx_bloque, registro in enumerate(iccids_bloque, 1):
+                        # Verificar estado del proceso antes de continuar
                         estado_proceso = self.obtener_estado_proceso(lote_nombre)
+                        
                         if estado_proceso == "DETENIDO":
                             print("\n⏹️  Proceso detenido por el usuario")
                             self.finalizar_proceso(lote_nombre, "DETENIDO")
-                            return self.stats
-                    
-                    iccid_completo = registro['iccid_completo']
-                    ultimos_13 = registro['ultimos_13_digitos']
-                    
-                    print(f"[{idx}/{total}] Verificando ICCID: {iccid_completo}")
-                    
-                    # Verificar en el portal
-                    estatus, numero, observaciones = self.verificar_iccid_en_portal(
-                        page, ultimos_13
-                    )
-                    
-                    # Actualizar en base de datos
-                    self.actualizar_iccid_en_db(
-                        iccid_completo, estatus, numero, observaciones
-                    )
-                    
-                    # Actualizar estadísticas
-                    self.stats["procesadas"] += 1
-                    if estatus == "ACTIVA":
-                        self.stats["activas"] += 1
-                    elif estatus == "INACTIVA":
-                        self.stats["inactivas"] += 1
-                    else:
-                        self.stats["errores"] += 1
-                    
-                    print(f"   ✓ Estado: {estatus} | {observaciones}")
-                    
-                    # Actualizar progreso en la base de datos
-                    self.actualizar_progreso_proceso(
-                        lote_nombre, idx, 
-                        self.stats["activas"], 
-                        self.stats["inactivas"], 
-                        self.stats["errores"]
-                    )
-                    
-                    # Callback de progreso
-                    if callback_progreso:
-                        callback_progreso(idx, total, estatus, numero)
-                    
-                    # Delay entre verificaciones
-                    if idx < total:
+                            break
+                        
+                        # Si está pausado, esperar hasta que se reanude o detenga
+                        while estado_proceso == "PAUSADO":
+                            print(f"\n⏸️  Proceso pausado. Esperando...")
+                            time.sleep(2)
+                            estado_proceso = self.obtener_estado_proceso(lote_nombre)
+                            if estado_proceso == "DETENIDO":
+                                print("\n⏹️  Proceso detenido por el usuario")
+                                self.finalizar_proceso(lote_nombre, "DETENIDO")
+                                return self.stats
+                        
+                        # Calcular índice global
+                        idx_global = procesadas_global + idx_bloque
+                        
+                        iccid_completo = registro['iccid_completo']
+                        ultimos_13 = registro['ultimos_13_digitos']
+                        
+                        print(f"[{idx_global}/{total_a_procesar}] Verificando ICCID: {iccid_completo}")
+                        
+                        # Verificar en el portal
+                        estatus, numero, observaciones = self.verificar_iccid_en_portal(
+                            page, ultimos_13
+                        )
+                        
+                        # Actualizar en base de datos
+                        self.actualizar_iccid_en_db(
+                            iccid_completo, estatus, numero, observaciones
+                        )
+                        
+                        # Actualizar estadísticas
+                        self.stats["procesadas"] += 1
+                        if estatus == "ACTIVA":
+                            self.stats["activas"] += 1
+                        elif estatus == "INACTIVA":
+                            self.stats["inactivas"] += 1
+                        else:
+                            self.stats["errores"] += 1
+                        
+                        print(f"   ✓ Estado: {estatus} | {observaciones}")
+                        
+                        # Actualizar progreso en la base de datos
+                        self.actualizar_progreso_proceso(
+                            lote_nombre, idx_global, 
+                            self.stats["activas"], 
+                            self.stats["inactivas"], 
+                            self.stats["errores"]
+                        )
+                        
+                        # Callback de progreso
+                        if callback_progreso:
+                            callback_progreso(idx_global, total_a_procesar, estatus, numero)
+                        
+                        # Delay entre verificaciones
                         time.sleep(self.delay_entre_verificaciones)
-                
+                    
+                    # Actualizar contador global
+                    procesadas_global += len(iccids_bloque)
+                    
+                    print(f"\n✅ Bloque completado. Progreso total: {procesadas_global}/{total_a_procesar}\n")
+                    
+                    # Si se detuvo el proceso, salir del while
+                    if estado_proceso == "DETENIDO":
+                        break
+            
             finally:
                 browser.close()
         
         # Calcular estadísticas finales
-        self.stats["fin"] = datetime.now()
-        self.stats["duracion_minutos"] = (
-            self.stats["fin"] - self.stats["inicio"]
-        ).total_seconds() / 60
+        duracion = (datetime.now() - self.stats["inicio"]).total_seconds() / 60
+        
+        self.stats["duracion_minutos"] = duracion
+        
+        # Marcar proceso como completado
+        self.finalizar_proceso(lote_nombre, "COMPLETADO")
+        
+        print(f"\n{'='*60}")
+        print(f"✅ Verificación completada")
+        print(f"📊 Procesadas: {self.stats['procesadas']}")
+        print(f"✅ Activas: {self.stats['activas']}")
+        print(f"⭕ Inactivas: {self.stats['inactivas']}")
+        print(f"❌ Errores: {self.stats['errores']}")
+        print(f"⏱️  Duración: {duracion:.1f} minutos")
+        print(f"{'='*60}\n")
         
         return self.stats
-    
     def obtener_estadisticas_lote(self, lote_nombre: str) -> Dict:
         """Obtener estadísticas de un lote"""
         try:
