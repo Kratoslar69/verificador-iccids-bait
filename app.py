@@ -287,7 +287,20 @@ elif menu_option == "▶️ Verificar ICCIDs":
         procesos_activos = response_procesos.data
         
         if procesos_activos:
-            st.info(f"🔄 Hay {len(procesos_activos)} proceso(s) activo(s)")
+            st.info(f"🔄 Hay {len(procesos_activos)} proceso(s) activo(s) - Auto-actualización cada 5 segundos")
+            
+            # Auto-refresh cada 5 segundos si hay procesos activos
+            import streamlit as st
+            st.markdown(
+                """
+                <script>
+                setTimeout(function(){
+                    window.location.reload();
+                }, 5000);
+                </script>
+                """,
+                unsafe_allow_html=True
+            )
             
             for proceso in procesos_activos:
                 with st.expander(f"📦 Lote: {proceso['lote']} - Estado: {proceso['estado']}"):
@@ -379,35 +392,7 @@ elif menu_option == "▶️ Verificar ICCIDs":
                     if pendientes == 0:
                         st.warning("⚠️ No hay ICCIDs pendientes en este lote")
                     else:
-                        st.info("🚀 Iniciando verificación... Esto puede tomar varios minutos.")
-                        
-                        # Contenedores para progreso
-                        progress_bar = st.progress(0)
-                        status_container = st.empty()
-                        metrics_container = st.empty()
-                        
-                        # Callback para actualizar progreso
-                        stats_temp = {"activas": 0, "inactivas": 0, "errores": 0}
-                        
-                        def actualizar_progreso(actual, total, estatus, numero):
-                            progress = actual / total
-                            progress_bar.progress(progress)
-                            
-                            if estatus == "ACTIVA":
-                                stats_temp["activas"] += 1
-                            elif estatus == "INACTIVA":
-                                stats_temp["inactivas"] += 1
-                            else:
-                                stats_temp["errores"] += 1
-                            
-                            status_container.text(f"Procesando: {actual}/{total} ICCIDs")
-                            
-                            col1, col2, col3 = metrics_container.columns(3)
-                            col1.metric("✅ Activas", stats_temp["activas"])
-                            col2.metric("⭕ Inactivas", stats_temp["inactivas"])
-                            col3.metric("❌ Errores", stats_temp["errores"])
-                        
-                        # Ejecutar verificación
+                        # Iniciar verificación en background
                         try:
                             try:
                                 supabase_url = st.secrets["SUPABASE_URL"]
@@ -415,35 +400,31 @@ elif menu_option == "▶️ Verificar ICCIDs":
                             except:
                                 supabase_url = os.getenv("SUPABASE_URL")
                                 supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-                            verificador = VerificadorICCID(supabase_url, supabase_key)
+                            
+                            from background_worker import iniciar_verificacion_background
+                            
                             limite = None if limite_verificacion == 0 else limite_verificacion
                             
-                            resultados = verificador.procesar_lote(
-                                lote_seleccionado,
+                            # Iniciar proceso en background
+                            iniciado = iniciar_verificacion_background(
+                                lote_nombre=lote_seleccionado,
                                 limite=limite,
-                                callback_progreso=actualizar_progreso
+                                supabase_url=supabase_url,
+                                supabase_key=supabase_key
                             )
                             
-                            progress_bar.empty()
-                            status_container.empty()
-                            
-                            # Mostrar resultados finales
-                            st.success("✅ Verificación completada exitosamente")
-                            
-                            col1, col2, col3, col4 = st.columns(4)
-                            with col1:
-                                st.metric("📱 Procesadas", resultados["procesadas"])
-                            with col2:
-                                st.metric("✅ Activas", resultados["activas"])
-                            with col3:
-                                st.metric("⭕ Inactivas", resultados["inactivas"])
-                            with col4:
-                                st.metric("❌ Errores", resultados["errores"])
-                            
-                            st.info(f"⏱️ Duración: {resultados['duracion_minutos']:.1f} minutos")
+                            if iniciado:
+                                st.success("✅ Proceso iniciado en background")
+                                st.info("🔄 El proceso continuará ejecutándose aunque cierres el navegador")
+                                st.info("📊 Puedes ver el progreso en la sección superior o actualizar la página")
+                                st.rerun()
+                            else:
+                                st.warning("⚠️ Ya hay un proceso activo para este lote")
                         
                         except Exception as e:
-                            st.error(f"❌ Error durante la verificación: {e}")
+                            st.error(f"❌ Error al iniciar verificación: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
     
     except Exception as e:
         st.error(f"❌ Error al cargar lotes: {e}")
