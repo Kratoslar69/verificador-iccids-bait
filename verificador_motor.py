@@ -111,41 +111,46 @@ class VerificadorICCID:
             
             # CASO 1: Verificar si aparece el modal de "necesita activarse" (INACTIVA)
             try:
-                modal_inactiva = page.locator('text="tu SIM BAIT necesita activarse"')
-                if modal_inactiva.is_visible(timeout=8000):
+                # Buscar el texto "necesita activarse" en todo el contenido de la página
+                page_text = page.content()
+                print(f"[DEBUG] Buscando popup para ICCID {ultimos_13_digitos}...")
+                
+                if "necesita activarse" in page_text:
+                    print(f"[DEBUG] ✓ Encontrado 'necesita activarse' - ICCID INACTIVA")
                     return "INACTIVA", None, "SIM requiere activación"
-            except:
+                else:
+                    print(f"[DEBUG] ✗ No se encontró 'necesita activarse'")
+            except Exception as e:
+                print(f"[DEBUG] Error en CASO 1: {str(e)}")
                 pass
             
             # CASO 2: Verificar si aparece el modal con "Validación automática" y un número (ACTIVA)
             try:
                 # Buscar el modal que contiene "Validación automática de tu número Bait"
-                modal_validacion = page.locator('text="Validación automática de tu número Bait"')
-                if modal_validacion.is_visible(timeout=2000):
-                    # Buscar número telefónico de 10 dígitos en el modal
-                    modal_content = page.locator('div:has-text("Validación automática")').first
-                    modal_text = modal_content.inner_text()
-                    
-                    # Buscar patrón de número telefónico (10 dígitos)
-                    numeros_encontrados = re.findall(r'\b[0-9]{10}\b', modal_text)
-                    if numeros_encontrados:
-                        numero = numeros_encontrados[0]
+                page_text = page.content()
+                print(f"[DEBUG] Buscando 'Validación automática'...")
+                
+                if "Validación automática" in page_text and "necesita activarse" not in page_text:
+                    print(f"[DEBUG] ✓ Encontrado 'Validación automática' - Buscando número...")
+                    # Buscar número telefónico de 10 dígitos
+                    numeros_encontrados = re.findall(r'\b[0-9]{10}\b', page_text)
+                    # Filtrar números que no sean ICCID ni el prefijo
+                    numeros_validos = [n for n in numeros_encontrados if not n.startswith('895214') and n != ultimos_13_digitos[:10]]
+                    if numeros_validos:
+                        numero = numeros_validos[0]
+                        print(f"[DEBUG] ✓ Número encontrado: {numero} - ICCID ACTIVA")
                         return "ACTIVA", numero, f"SIM activa con número {numero}"
-            except:
+                    else:
+                        print(f"[DEBUG] ✗ No se encontró número válido")
+                else:
+                    print(f"[DEBUG] ✗ No se encontró 'Validación automática'")
+            except Exception as e:
+                print(f"[DEBUG] Error en CASO 2: {str(e)}")
                 pass
             
-            # CASO 3: Buscar número telefónico en cualquier parte de la página
-            try:
-                page_content = page.content()
-                # Buscar patrones de número telefónico (10 dígitos que no sean ICCID)
-                numeros_encontrados = re.findall(r'\b[0-9]{10}\b', page_content)
-                if numeros_encontrados:
-                    # Filtrar números que no sean parte del ICCID
-                    for num in numeros_encontrados:
-                        if not num.startswith('895214') and num != ultimos_13_digitos[:10]:
-                            return "ACTIVA", num, f"SIM activa con número {num}"
-            except:
-                pass
+            # CASO 3: Si no se detectó ni "necesita activarse" ni "Validación automática", es un ERROR
+            print(f"[DEBUG] ⚠ No se pudo determinar el estado - Marcando como ERROR")
+            # No buscar números en toda la página para evitar falsos positivos
             
             # Si no se encontró información clara después de esperar
             return "ERROR", None, "No se pudo determinar el estado de la SIM (timeout o respuesta inesperada)"
