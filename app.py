@@ -8,7 +8,6 @@ import pandas as pd
 import os
 from datetime import datetime
 from io import BytesIO
-from dotenv import load_dotenv
 from supabase import create_client, Client
 from verificador_motor import VerificadorICCID
 import time
@@ -21,14 +20,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Cargar variables de entorno
-load_dotenv()
-
 # Inicializar Supabase
 @st.cache_resource
 def init_supabase():
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_KEY")
+    # Intentar cargar desde Streamlit secrets primero, luego desde variables de entorno
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_SERVICE_KEY"]
+    except:
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_SERVICE_KEY")
     return create_client(url, key)
 
 supabase = init_supabase()
@@ -191,7 +192,13 @@ elif menu_option == "📤 Cargar Lote":
                         st.error("❌ El archivo debe contener una columna llamada 'ICCID'")
                     else:
                         # Procesar ICCIDs
-                        verificador = VerificadorICCID()
+                        try:
+                            supabase_url = st.secrets["SUPABASE_URL"]
+                            supabase_key = st.secrets["SUPABASE_SERVICE_KEY"]
+                        except:
+                            supabase_url = os.getenv("SUPABASE_URL")
+                            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+                        verificador = VerificadorICCID(supabase_url, supabase_key)
                         registros_insertados = 0
                         registros_duplicados = 0
                         
@@ -317,7 +324,13 @@ elif menu_option == "▶️ Verificar ICCIDs":
                         
                         # Ejecutar verificación
                         try:
-                            verificador = VerificadorICCID()
+                            try:
+                                supabase_url = st.secrets["SUPABASE_URL"]
+                                supabase_key = st.secrets["SUPABASE_SERVICE_KEY"]
+                            except:
+                                supabase_url = os.getenv("SUPABASE_URL")
+                                supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+                            verificador = VerificadorICCID(supabase_url, supabase_key)
                             limite = None if limite_verificacion == 0 else limite_verificacion
                             
                             resultados = verificador.procesar_lote(

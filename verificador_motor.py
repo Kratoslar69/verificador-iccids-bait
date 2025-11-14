@@ -10,11 +10,7 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple
 from playwright.sync_api import sync_playwright, Page, Browser, TimeoutError as PlaywrightTimeout
 from tenacity import retry, stop_after_attempt, wait_exponential
-from dotenv import load_dotenv
 from supabase import create_client, Client
-
-# Cargar variables de entorno
-load_dotenv()
 
 class VerificadorICCID:
     """
@@ -22,10 +18,11 @@ class VerificadorICCID:
     Configuración: 30,000 verificaciones/día = ~3 segundos por ICCID
     """
     
-    def __init__(self):
+    def __init__(self, supabase_url=None, supabase_key=None):
         """Inicializar conexión a Supabase y configuración"""
-        self.supabase_url = os.getenv("SUPABASE_URL")
-        self.supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+        # Permitir pasar credenciales como parámetros o usar variables de entorno
+        self.supabase_url = supabase_url or os.getenv("SUPABASE_URL")
+        self.supabase_key = supabase_key or os.getenv("SUPABASE_SERVICE_KEY")
         self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
         
         # Configuración de velocidad
