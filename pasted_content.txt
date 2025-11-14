@@ -1,0 +1,73 @@
+RESUMEN EJECUTIVO - Sistema Verificador ICCIDs BAIT
+🎯 OBJETIVO DEL PROYECTO
+Crear un sistema automatizado para verificar el estatus de hasta 500,000 ICCIDs en el portal de portabilidad BAIT (https://mibait.com/haz-tu-portabilidad), determinando si cada SIM está ACTIVA (con número asignado) o INACTIVA (requiere activación).
+
+📊 CONTEXTO DEL NEGOCIO
+Usuario: José - BAIT/BAITEL (distribuidor y operador móvil virtual en México)
+Necesidad: Verificar inventario masivo de tarjetas SIM para identificar:
+
+ICCIDs disponibles (inactivas) para asignar
+ICCIDs ya activas con número telefónico
+Volumen: Hasta 500,000 ICCIDs por lote
+
+
+🔍 ANÁLISIS DEL PORTAL BAIT
+Flujo de Verificación Manual:
+
+Usuario accede a https://mibait.com/haz-tu-portabilidad
+Sistema solicita ICCID en formato: 895214 + últimos 13 dígitos (sin F final)
+Portal responde con 2 posibles resultados:
+
+Imagen 1: Modal "tu SIM BAIT necesita activarse" = INACTIVA
+Imagen 3: Muestra número telefónico asignado (ej: 3329448797) = ACTIVA
+
+
+
+Datos Técnicos:
+
+ICCID completo: 19-20 dígitos (ejemplo: 8952140063719050976F)
+Prefijo fijo: 895214 (ya incluido en el portal)
+Input requerido: Solo últimos 13 dígitos sin la F (ejemplo: 0063719050976)
+Formato de entrada: No requiere IMEI ni NIP de portabilidad
+
+
+🏗️ ARQUITECTURA DEL SISTEMA
+Stack Tecnológico:
+
+Frontend: Streamlit (interfaz web Python)
+Base de Datos: Supabase PostgreSQL (plan Pro del usuario)
+Automatización Web: Selenium/Playwright (Fase 2 - pendiente)
+Procesamiento: Python 3.10+, Pandas, OpenPyXL
+
+Componentes Desarrollados:
+sistema_verificador_iccids_bait/
+├── verificador_iccids.py       # Aplicación principal Streamlit
+├── requirements.txt             # Dependencias Python
+├── setup_supabase.sql          # Script creación tabla BD
+├── ejemplo_iccids.xlsx         # Archivo muestra
+├── README.md                   # Documentación técnica
+└── INSTRUCCIONES_PASO_A_PASO.md # Guía usuario
+
+💾 ESTRUCTURA DE BASE DE DATOS
+Tabla: verificacion_iccids
+sqlCREATE TABLE verificacion_iccids (
+  id BIGSERIAL PRIMARY KEY,
+  iccid_completo VARCHAR(20) NOT NULL,      -- ICCID original (19-20 dígitos)
+  ultimos_13_digitos VARCHAR(13),           -- Para portal BAIT (sin F)
+  estatus VARCHAR(20) DEFAULT 'PENDIENTE',  -- PENDIENTE/ACTIVA/INACTIVA/ERROR
+  numero_asignado VARCHAR(10),              -- Número telefónico si activa
+  fecha_verificacion TIMESTAMP,             -- Timestamp de verificación
+  lote VARCHAR(50),                         -- Identificador del batch
+  observaciones TEXT,                       -- Notas adicionales
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Índices para optimización
+CREATE INDEX idx_iccid ON verificacion_iccids(iccid_completo);
+CREATE INDEX idx_estatus ON verificacion_iccids(estatus);
+CREATE INDEX idx_lote ON verificacion_iccids(lote);
+Credenciales Supabase (usuario ya configurado):
+
+URL: https://wfbihnqupsfvoimbhcli.supabase.co
+Service Role Key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndmYmlobnF1cHNmdm9pbWJoY2xpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MzAwODEwOCwiZXhwIjoyMDc4NTg0MTA4fQ.sYahA9P3aqJevkBRQf6nPjPBjR68JgPni8K2QqXIy-Q
+
