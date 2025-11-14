@@ -106,10 +106,12 @@ class VerificadorICCID:
             # IMPORTANTE: Presionar Enter para activar la validación
             input_iccid.press("Enter")
             
-            # Esperar activamente a que aparezca el popup de respuesta (hasta 10 segundos)
+            # CRÍTICO: Esperar 5 segundos para que el popup aparezca
+            # El popup tarda ~3-5 segundos en mostrarse después de presionar Enter
             print(f"[DEBUG] Esperando popup para ICCID {ultimos_13_digitos}...")
+            time.sleep(5)  # Espera fija de 5 segundos
             
-            max_intentos = 20  # 20 intentos x 0.5 segundos = 10 segundos máximo
+            max_intentos = 10  # 10 intentos x 0.5 segundos = 5 segundos adicionales
             popup_detectado = False
             estado_final = None
             numero_final = None
@@ -119,40 +121,37 @@ class VerificadorICCID:
                 time.sleep(0.5)  # Esperar medio segundo entre cada intento
                 
                 try:
+                    # CASO 1: Verificar PRIMERO si aparece el popup de INACTIVA
+                    # Buscar en el HTML completo los elementos únicos del popup
                     page_text = page.content()
+                    tiene_whatsapp = "btz.mx/whatsappbait" in page_text
+                    tiene_necesita = "necesita activarse" in page_text
                     
-                    # CASO 1: Verificar si aparece el popup de INACTIVA
-                    # Buscar elementos únicos del popup de error/inactiva:
-                    # - Botón "Aceptar" (amarillo)
-                    # - Enlace "btz.mx/whatsappbait"
-                    # - Texto "necesita activarse"
-                    
-                    if ("btz.mx/whatsappbait" in page_text or 
-                        ("Aceptar" in page_text and "necesita activarse" in page_text)):
-                        print(f"[DEBUG] ✓ Popup de INACTIVA detectado en intento {intento+1} (botón Aceptar + whatsapp)")
+                    if tiene_whatsapp or tiene_necesita:
+                        print(f"[DEBUG] ✓ Popup de INACTIVA detectado en intento {intento+1}")
+                        print(f"[DEBUG]   - whatsapp: {tiene_whatsapp}, necesita: {tiene_necesita}")
                         estado_final = "INACTIVA"
                         numero_final = None
                         observaciones_final = "SIM requiere activación"
                         popup_detectado = True
                         break
                     
-                    # CASO 2: Verificar si aparece "Validación automática" (ACTIVA)
-                    if "Validación automática" in page_text:
-                        print(f"[DEBUG] ✓ Encontrado 'Validación automática' en intento {intento+1} - Buscando número...")
-                        # Buscar número telefónico de 10 dígitos
-                        numeros_encontrados = re.findall(r'\b[0-9]{10}\b', page_text)
-                        # Filtrar números que no sean ICCID ni el prefijo
-                        numeros_validos = [n for n in numeros_encontrados if not n.startswith('895214') and n != ultimos_13_digitos[:10]]
-                        if numeros_validos:
-                            numero = numeros_validos[0]
-                            print(f"[DEBUG] ✓ Número encontrado: {numero} - ICCID ACTIVA")
-                            estado_final = "ACTIVA"
-                            numero_final = numero
-                            observaciones_final = f"SIM activa con número {numero}"
-                            popup_detectado = True
-                            break
-                        else:
-                            print(f"[DEBUG] ⚠ 'Validación automática' encontrada pero sin número válido")
+                    # CASO 2: Si NO es INACTIVA, buscar el campo de validación automática (ACTIVA)
+                    # El número aparece en un input con placeholder "Validación automática de tu número Bait"
+                    try:
+                        campo_validacion = page.locator('input[placeholder*="Validación automática"]').first
+                        if campo_validacion.is_visible(timeout=500):
+                            numero = campo_validacion.input_value()
+                            # Verificar que sea un número de 10 dígitos
+                            if numero and len(numero) == 10 and numero.isdigit():
+                                print(f"[DEBUG] ✓ Número telefónico encontrado en campo validación: {numero} - ICCID ACTIVA")
+                                estado_final = "ACTIVA"
+                                numero_final = numero
+                                observaciones_final = f"SIM activa con número {numero}"
+                                popup_detectado = True
+                                break
+                    except:
+                        pass
                     
                     # Si llegamos al intento 5, 10 y 15, mostrar progreso
                     if (intento + 1) % 5 == 0:
