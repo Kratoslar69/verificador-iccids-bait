@@ -106,51 +106,61 @@ class VerificadorICCID:
             # IMPORTANTE: Presionar Enter para activar la validación
             input_iccid.press("Enter")
             
-            # Esperar a que aparezca el popup de respuesta (hasta 10 segundos)
-            time.sleep(2)
+            # Esperar activamente a que aparezca el popup de respuesta (hasta 10 segundos)
+            print(f"[DEBUG] Esperando popup para ICCID {ultimos_13_digitos}...")
             
-            # CASO 1: Verificar si aparece el modal de "necesita activarse" (INACTIVA)
-            try:
-                # Buscar el texto "necesita activarse" en todo el contenido de la página
-                page_text = page.content()
-                print(f"[DEBUG] Buscando popup para ICCID {ultimos_13_digitos}...")
+            max_intentos = 20  # 20 intentos x 0.5 segundos = 10 segundos máximo
+            popup_detectado = False
+            estado_final = None
+            numero_final = None
+            observaciones_final = None
+            
+            for intento in range(max_intentos):
+                time.sleep(0.5)  # Esperar medio segundo entre cada intento
                 
-                if "necesita activarse" in page_text:
-                    print(f"[DEBUG] ✓ Encontrado 'necesita activarse' - ICCID INACTIVA")
-                    return "INACTIVA", None, "SIM requiere activación"
-                else:
-                    print(f"[DEBUG] ✗ No se encontró 'necesita activarse'")
-            except Exception as e:
-                print(f"[DEBUG] Error en CASO 1: {str(e)}")
-                pass
+                try:
+                    page_text = page.content()
+                    
+                    # CASO 1: Verificar si aparece "necesita activarse" (INACTIVA)
+                    if "necesita activarse" in page_text:
+                        print(f"[DEBUG] ✓ Encontrado 'necesita activarse' en intento {intento+1} - ICCID INACTIVA")
+                        estado_final = "INACTIVA"
+                        numero_final = None
+                        observaciones_final = "SIM requiere activación"
+                        popup_detectado = True
+                        break
+                    
+                    # CASO 2: Verificar si aparece "Validación automática" (ACTIVA)
+                    if "Validación automática" in page_text:
+                        print(f"[DEBUG] ✓ Encontrado 'Validación automática' en intento {intento+1} - Buscando número...")
+                        # Buscar número telefónico de 10 dígitos
+                        numeros_encontrados = re.findall(r'\b[0-9]{10}\b', page_text)
+                        # Filtrar números que no sean ICCID ni el prefijo
+                        numeros_validos = [n for n in numeros_encontrados if not n.startswith('895214') and n != ultimos_13_digitos[:10]]
+                        if numeros_validos:
+                            numero = numeros_validos[0]
+                            print(f"[DEBUG] ✓ Número encontrado: {numero} - ICCID ACTIVA")
+                            estado_final = "ACTIVA"
+                            numero_final = numero
+                            observaciones_final = f"SIM activa con número {numero}"
+                            popup_detectado = True
+                            break
+                        else:
+                            print(f"[DEBUG] ⚠ 'Validación automática' encontrada pero sin número válido")
+                    
+                    # Si llegamos al intento 5, 10 y 15, mostrar progreso
+                    if (intento + 1) % 5 == 0:
+                        print(f"[DEBUG] Intento {intento+1}/{max_intentos} - Esperando popup...")
+                        
+                except Exception as e:
+                    print(f"[DEBUG] Error en intento {intento+1}: {str(e)}")
+                    continue
             
-            # CASO 2: Verificar si aparece el modal con "Validación automática" y un número (ACTIVA)
-            try:
-                # Buscar el modal que contiene "Validación automática de tu número Bait"
-                page_text = page.content()
-                print(f"[DEBUG] Buscando 'Validación automática'...")
-                
-                if "Validación automática" in page_text and "necesita activarse" not in page_text:
-                    print(f"[DEBUG] ✓ Encontrado 'Validación automática' - Buscando número...")
-                    # Buscar número telefónico de 10 dígitos
-                    numeros_encontrados = re.findall(r'\b[0-9]{10}\b', page_text)
-                    # Filtrar números que no sean ICCID ni el prefijo
-                    numeros_validos = [n for n in numeros_encontrados if not n.startswith('895214') and n != ultimos_13_digitos[:10]]
-                    if numeros_validos:
-                        numero = numeros_validos[0]
-                        print(f"[DEBUG] ✓ Número encontrado: {numero} - ICCID ACTIVA")
-                        return "ACTIVA", numero, f"SIM activa con número {numero}"
-                    else:
-                        print(f"[DEBUG] ✗ No se encontró número válido")
-                else:
-                    print(f"[DEBUG] ✗ No se encontró 'Validación automática'")
-            except Exception as e:
-                print(f"[DEBUG] Error en CASO 2: {str(e)}")
-                pass
-            
-            # CASO 3: Si no se detectó ni "necesita activarse" ni "Validación automática", es un ERROR
-            print(f"[DEBUG] ⚠ No se pudo determinar el estado - Marcando como ERROR")
-            # No buscar números en toda la página para evitar falsos positivos
+            # Verificar si se detectó algo
+            if popup_detectado:
+                return estado_final, numero_final, observaciones_final
+            else:
+                print(f"[DEBUG] ⚠ No se detectó popup después de {max_intentos} intentos - Marcando como ERROR")
             
             # Si no se encontró información clara después de esperar
             return "ERROR", None, "No se pudo determinar el estado de la SIM (timeout o respuesta inesperada)"
