@@ -196,10 +196,76 @@ class VerificadorICCID:
             print(f"Error al actualizar DB: {e}")
             return False
     
+    def inicializar_proceso(self, lote_nombre: str, total: int):
+        """Inicializar o actualizar el registro de proceso en la base de datos"""
+        try:
+            # Intentar obtener proceso existente
+            response = self.supabase.table("proceso_verificacion").select("*").eq(
+                "lote", lote_nombre
+            ).execute()
+            
+            if response.data:
+                # Actualizar proceso existente
+                self.supabase.table("proceso_verificacion").update({
+                    "estado": "EJECUTANDO",
+                    "progreso_total": total,
+                    "fecha_actualizacion": datetime.now().isoformat()
+                }).eq("lote", lote_nombre).execute()
+            else:
+                # Crear nuevo proceso
+                self.supabase.table("proceso_verificacion").insert({
+                    "lote": lote_nombre,
+                    "estado": "EJECUTANDO",
+                    "progreso_actual": 0,
+                    "progreso_total": total,
+                    "activas": 0,
+                    "inactivas": 0,
+                    "errores": 0
+                }).execute()
+        except Exception as e:
+            print(f"Error al inicializar proceso: {e}")
+    
+    def actualizar_progreso_proceso(self, lote_nombre: str, progreso: int, 
+                                    activas: int, inactivas: int, errores: int):
+        """Actualizar el progreso del proceso en la base de datos"""
+        try:
+            self.supabase.table("proceso_verificacion").update({
+                "progreso_actual": progreso,
+                "activas": activas,
+                "inactivas": inactivas,
+                "errores": errores,
+                "fecha_actualizacion": datetime.now().isoformat()
+            }).eq("lote", lote_nombre).execute()
+        except Exception as e:
+            print(f"Error al actualizar progreso: {e}")
+    
+    def obtener_estado_proceso(self, lote_nombre: str) -> str:
+        """Obtener el estado actual del proceso desde la base de datos"""
+        try:
+            response = self.supabase.table("proceso_verificacion").select("estado").eq(
+                "lote", lote_nombre
+            ).execute()
+            
+            if response.data:
+                return response.data[0]['estado']
+            return "DETENIDO"
+        except:
+            return "DETENIDO"
+    
+    def finalizar_proceso(self, lote_nombre: str, estado: str = "COMPLETADO"):
+        """Marcar el proceso como finalizado"""
+        try:
+            self.supabase.table("proceso_verificacion").update({
+                "estado": estado,
+                "fecha_actualizacion": datetime.now().isoformat()
+            }).eq("lote", lote_nombre).execute()
+        except Exception as e:
+            print(f"Error al finalizar proceso: {e}")
+    
     def procesar_lote(self, lote_nombre: str, limite: Optional[int] = None, 
                       callback_progreso=None) -> Dict:
         """
-        Procesar un lote de ICCIDs pendientes
+        Procesar un lote de ICCIDs pendientes con control de estado
         
         Args:
             lote_nombre: Nombre del lote a procesar
@@ -236,6 +302,9 @@ class VerificadorICCID:
         print(f"⏱️  Tiempo estimado: {(total * self.delay_entre_verificaciones) / 60:.1f} minutos")
         print(f"📊 Objetivo: 30,000 ICCIDs/día\n")
         
+        # Inicializar proceso en la base de datos
+        self.inicializar_proceso(lote_nombre, total)
+        
         # Iniciar navegador
         with sync_playwright() as p:
             browser: Browser = p.chromium.launch(headless=True)
@@ -247,6 +316,24 @@ class VerificadorICCID:
             
             try:
                 for idx, registro in enumerate(iccids_pendientes, 1):
+                    # Verificar estado del proceso antes de continuar
+                    estado_proceso = self.obtener_estado_proceso(lote_nombre)
+                    
+                    if estado_proceso == "DETENIDO":
+                        print("\n⏹️  Proceso detenido por el usuario")
+                        self.finalizar_proceso(lote_nombre, "DETENIDO")
+                        break
+                    
+                    # Si está pausado, esperar hasta que se reanude o detenga
+                    while estado_proceso == "PAUSADO":
+                        print(f"\n⏸️  Proceso pausado. Esperando...")
+                        time.sleep(2)
+                        estado_proceso = self.obtener_estado_proceso(lote_nombre)
+                        if estado_proceso == "DETENIDO":
+                            print("\n⏹️  Proceso detenido por el usuario")
+                            self.finalizar_proceso(lote_nombre, "DETENIDO")
+                            return self.stats
+                    
                     iccid_completo = registro['iccid_completo']
                     ultimos_13 = registro['ultimos_13_digitos']
                     
@@ -272,6 +359,14 @@ class VerificadorICCID:
                         self.stats["errores"] += 1
                     
                     print(f"   ✓ Estado: {estatus} | {observaciones}")
+                    
+                    # Actualizar progreso en la base de datos
+                    self.actualizar_progreso_proceso(
+                        lote_nombre, idx, 
+                        self.stats["activas"], 
+                        self.stats["inactivas"], 
+                        self.stats["errores"]
+                    )
                     
                     # Callback de progreso
                     if callback_progreso:

@@ -191,6 +191,34 @@ elif menu_option == "📤 Cargar Lote":
                     if 'ICCID' not in df.columns:
                         st.error("❌ El archivo debe contener una columna llamada 'ICCID'")
                     else:
+                        # Validar duplicados en el archivo Excel
+                        duplicados_en_archivo = df['ICCID'].duplicated().sum()
+                        if duplicados_en_archivo > 0:
+                            st.warning(f"⚠️ Se encontraron {duplicados_en_archivo} ICCIDs duplicadas en el archivo")
+                        
+                        # Verificar si el lote ya existe en la base de datos
+                        response_lote = supabase.table("verificacion_iccids").select("lote").eq(
+                            "lote", nombre_lote
+                        ).limit(1).execute()
+                        
+                        if response_lote.data:
+                            st.warning(f"⚠️ El lote '{nombre_lote}' ya existe en la base de datos")
+                            accion_duplicados = st.radio(
+                                "¿Qué deseas hacer?",
+                                ["Cancelar carga", "Agregar ICCIDs al lote existente", "Sobrescribir lote completo"],
+                                key="radio_duplicados"
+                            )
+                            
+                            if accion_duplicados == "Cancelar carga":
+                                st.info("ℹ️ Carga cancelada")
+                                st.stop()
+                            elif accion_duplicados == "Sobrescribir lote completo":
+                                # Eliminar lote existente
+                                supabase.table("verificacion_iccids").delete().eq(
+                                    "lote", nombre_lote
+                                ).execute()
+                                st.info(f"🗑️ Lote '{nombre_lote}' eliminado. Procediendo con la carga...")
+                        
                         # Procesar ICCIDs
                         try:
                             supabase_url = st.secrets["SUPABASE_URL"]
@@ -250,6 +278,63 @@ elif menu_option == "📤 Cargar Lote":
 # ==================== VERIFICAR ICCIDs ====================
 elif menu_option == "▶️ Verificar ICCIDs":
     st.header("▶️ Iniciar Verificación de ICCIDs")
+    
+    # Verificar si hay procesos en ejecución
+    try:
+        response_procesos = supabase.table("proceso_verificacion").select("*").in_(
+            "estado", ["EJECUTANDO", "PAUSADO"]
+        ).execute()
+        procesos_activos = response_procesos.data
+        
+        if procesos_activos:
+            st.info(f"🔄 Hay {len(procesos_activos)} proceso(s) activo(s)")
+            
+            for proceso in procesos_activos:
+                with st.expander(f"📦 Lote: {proceso['lote']} - Estado: {proceso['estado']}"):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("📈 Progreso", f"{proceso['progreso_actual']}/{proceso['progreso_total']}")
+                    with col2:
+                        st.metric("✅ Activas", proceso['activas'])
+                    with col3:
+                        st.metric("⭕ Inactivas", proceso['inactivas'])
+                    with col4:
+                        st.metric("❌ Errores", proceso['errores'])
+                    
+                    # Botones de control
+                    col_btn1, col_btn2, col_btn3 = st.columns(3)
+                    
+                    with col_btn1:
+                        if proceso['estado'] == "EJECUTANDO":
+                            if st.button("⏸️ Pausar", key=f"pausar_{proceso['lote']}"):
+                                supabase.table("proceso_verificacion").update({
+                                    "estado": "PAUSADO"
+                                }).eq("lote", proceso['lote']).execute()
+                                st.success("⏸️ Proceso pausado")
+                                st.rerun()
+                        else:
+                            if st.button("▶️ Reanudar", key=f"reanudar_{proceso['lote']}"):
+                                supabase.table("proceso_verificacion").update({
+                                    "estado": "EJECUTANDO"
+                                }).eq("lote", proceso['lote']).execute()
+                                st.success("▶️ Proceso reanudado")
+                                st.rerun()
+                    
+                    with col_btn2:
+                        if st.button("⏹️ Detener", key=f"detener_{proceso['lote']}", type="primary"):
+                            supabase.table("proceso_verificacion").update({
+                                "estado": "DETENIDO"
+                            }).eq("lote", proceso['lote']).execute()
+                            st.warning("⏹️ Proceso detenido")
+                            st.rerun()
+                    
+                    with col_btn3:
+                        if st.button("🔄 Actualizar", key=f"actualizar_{proceso['lote']}"):
+                            st.rerun()
+            
+            st.divider()
+    except Exception as e:
+        st.error(f"❌ Error al verificar procesos: {e}")
     
     # Obtener lotes disponibles
     try:
@@ -477,20 +562,135 @@ elif menu_option == "⚙️ Configuración":
     
     st.subheader("🗄️ Gestión de Base de Datos")
     
-    with st.expander("⚠️ Zona de Peligro - Operaciones Avanzadas"):
-        st.warning("Las siguientes operaciones son irreversibles. Úsalas con precaución.")
+    # Mostrar estadísticas de lotes
+    try:
+        response = supabase.table("verificacion_iccids").select("lote, estatus").execute()
+        if response.data:
+            df_lotes = pd.DataFrame(response.data)
+            lotes_stats = df_lotes.groupby('lote')['estatus'].value_counts().unstack(fill_value=0)
+            
+            st.subheader("📊 Estadísticas por Lote")
+            st.dataframe(lotes_stats, use_container_width=True)
+            
+            # Calcular totales
+            lotes_stats['TOTAL'] = lotes_stats.sum(axis=1)
+            
+            st.divider()
+    except Exception as e:
+        st.error(f"❌ Error al cargar estadísticas: {e}")
+    
+    # Operaciones de limpieza
+    with st.expander("🧹 Limpieza de Duplicados"):
+        st.info("Buscar y eliminar registros duplicados en la base de datos")
         
-        col1, col2 = st.columns(2)
+        if st.button("🔍 Buscar Duplicados", use_container_width=True):
+            try:
+                # Buscar duplicados por iccid_completo
+                response = supabase.table("verificacion_iccids").select("iccid_completo").execute()
+                if response.data:
+                    df_check = pd.DataFrame(response.data)
+                    duplicados = df_check[df_check.duplicated(subset=['iccid_completo'], keep=False)]
+                    
+                    if len(duplicados) > 0:
+                        st.warning(f"⚠️ Se encontraron {len(duplicados)} registros duplicados")
+                        st.dataframe(duplicados.head(20), use_container_width=True)
+                        
+                        if st.button("🗑️ Eliminar Duplicados (mantener el más reciente)"):
+                            st.error("⚠️ Esta operación requiere confirmación manual en la base de datos")
+                    else:
+                        st.success("✅ No se encontraron duplicados")
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+    
+    # Eliminar lote específico
+    with st.expander("🗑️ Eliminar Lote Completo"):
+        st.warning("⚠️ Esta operación eliminará permanentemente todos los registros del lote seleccionado")
         
-        with col1:
-            if st.button("🗑️ Eliminar Lote Específico", use_container_width=True):
-                st.text_input("Nombre del lote a eliminar", key="lote_eliminar")
-                if st.button("Confirmar Eliminación"):
-                    st.error("Funcionalidad en desarrollo")
+        try:
+            response = supabase.table("verificacion_iccids").select("lote").execute()
+            if response.data:
+                df_lotes_list = pd.DataFrame(response.data)
+                lotes_disponibles = df_lotes_list['lote'].unique().tolist()
+                
+                lote_a_eliminar = st.selectbox(
+                    "Selecciona el lote a eliminar",
+                    options=lotes_disponibles,
+                    key="select_lote_eliminar"
+                )
+                
+                if lote_a_eliminar:
+                    # Mostrar estadísticas del lote
+                    lote_data = df_lotes_list[df_lotes_list['lote'] == lote_a_eliminar]
+                    st.info(f"📄 Total de registros en '{lote_a_eliminar}': {len(lote_data)}")
+                    
+                    confirmar = st.text_input(
+                        f"Escribe '{lote_a_eliminar}' para confirmar la eliminación",
+                        key="confirmar_eliminar"
+                    )
+                    
+                    if st.button("🗑️ ELIMINAR LOTE", type="primary", use_container_width=True):
+                        if confirmar == lote_a_eliminar:
+                            try:
+                                # Eliminar registros del lote
+                                supabase.table("verificacion_iccids").delete().eq(
+                                    "lote", lote_a_eliminar
+                                ).execute()
+                                
+                                # Eliminar proceso asociado
+                                supabase.table("proceso_verificacion").delete().eq(
+                                    "lote", lote_a_eliminar
+                                ).execute()
+                                
+                                st.success(f"✅ Lote '{lote_a_eliminar}' eliminado exitosamente")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al eliminar: {e}")
+                        else:
+                            st.error("❌ El nombre del lote no coincide")
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
+    
+    # Resetear ICCIDs a PENDIENTE
+    with st.expander("🔄 Resetear ICCIDs a PENDIENTE"):
+        st.info("Cambiar el estado de ICCIDs de un lote a PENDIENTE para re-verificarlas")
         
-        with col2:
-            if st.button("🔄 Resetear ICCIDs a PENDIENTE", use_container_width=True):
-                st.error("Funcionalidad en desarrollo")
+        try:
+            response = supabase.table("verificacion_iccids").select("lote").execute()
+            if response.data:
+                df_lotes_reset = pd.DataFrame(response.data)
+                lotes_disponibles_reset = df_lotes_reset['lote'].unique().tolist()
+                
+                lote_a_resetear = st.selectbox(
+                    "Selecciona el lote a resetear",
+                    options=lotes_disponibles_reset,
+                    key="select_lote_resetear"
+                )
+                
+                estado_a_resetear = st.selectbox(
+                    "Resetear ICCIDs con estado:",
+                    options=["Todos", "ACTIVA", "INACTIVA", "ERROR"],
+                    key="estado_resetear"
+                )
+                
+                if st.button("🔄 Resetear a PENDIENTE", use_container_width=True):
+                    try:
+                        query = supabase.table("verificacion_iccids").update({
+                            "estatus": "PENDIENTE",
+                            "numero_asignado": None,
+                            "fecha_verificacion": None,
+                            "observaciones": "Reseteado manualmente"
+                        }).eq("lote", lote_a_resetear)
+                        
+                        if estado_a_resetear != "Todos":
+                            query = query.eq("estatus", estado_a_resetear)
+                        
+                        response = query.execute()
+                        st.success(f"✅ ICCIDs reseteadas exitosamente")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al resetear: {e}")
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
     
     st.divider()
     
