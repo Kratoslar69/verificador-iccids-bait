@@ -79,8 +79,17 @@ class VerificadorICCID:
             page.goto(self.url_portal, wait_until="domcontentloaded", timeout=self.timeout_pagina)
             time.sleep(2)  # Esperar a que cargue completamente
             
+            # Cerrar modal de cookies si aparece
+            try:
+                boton_cerrar_cookies = page.locator('button:has-text("close"), button:has-text("Aceptar")').first
+                if boton_cerrar_cookies.is_visible(timeout=2000):
+                    boton_cerrar_cookies.click()
+                    time.sleep(0.5)
+            except:
+                pass  # Si no hay modal de cookies, continuar
+            
             # Localizar el campo de ICCID
-            # El campo tiene el prefijo 895214 ya incluido
+            # El campo tiene el placeholder "13 dígitos restantes de tu SIM"
             input_iccid = page.locator('input[placeholder*="13 dígitos"]').first
             
             if not input_iccid.is_visible(timeout=5000):
@@ -88,38 +97,58 @@ class VerificadorICCID:
             
             # Limpiar y llenar el campo
             input_iccid.click()
+            time.sleep(0.3)
             input_iccid.fill("")
-            time.sleep(0.5)
+            time.sleep(0.3)
             input_iccid.fill(ultimos_13_digitos)
-            time.sleep(1)
+            time.sleep(0.5)
             
-            # Esperar respuesta del portal (puede ser modal o campo de validación)
-            time.sleep(3)
+            # IMPORTANTE: Presionar Enter para activar la validación
+            input_iccid.press("Enter")
             
-            # Verificar si aparece el modal de "necesita activarse"
-            modal_inactiva = page.locator('text="tu SIM BAIT necesita activarse"')
-            if modal_inactiva.is_visible(timeout=2000):
-                return "INACTIVA", None, "SIM requiere activación"
+            # Esperar a que aparezca el popup de respuesta (hasta 10 segundos)
+            time.sleep(2)
             
-            # Verificar si aparece un número telefónico en el campo de validación
-            campo_validacion = page.locator('input[placeholder*="Validación"]').first
-            if campo_validacion.is_visible(timeout=2000):
-                numero = campo_validacion.input_value()
-                if numero and len(numero) == 10 and numero.isdigit():
-                    return "ACTIVA", numero, f"SIM activa con número {numero}"
+            # CASO 1: Verificar si aparece el modal de "necesita activarse" (INACTIVA)
+            try:
+                modal_inactiva = page.locator('text="tu SIM BAIT necesita activarse"')
+                if modal_inactiva.is_visible(timeout=8000):
+                    return "INACTIVA", None, "SIM requiere activación"
+            except:
+                pass
             
-            # Buscar número telefónico en cualquier parte de la página
-            page_content = page.content()
-            # Buscar patrones de número telefónico (10 dígitos)
-            numeros_encontrados = re.findall(r'\b[0-9]{10}\b', page_content)
-            if numeros_encontrados:
-                # Filtrar números que no sean el ICCID
-                for num in numeros_encontrados:
-                    if not num.startswith('895214'):
-                        return "ACTIVA", num, f"SIM activa con número {num}"
+            # CASO 2: Verificar si aparece el modal con "Validación automática" y un número (ACTIVA)
+            try:
+                # Buscar el modal que contiene "Validación automática de tu número Bait"
+                modal_validacion = page.locator('text="Validación automática de tu número Bait"')
+                if modal_validacion.is_visible(timeout=2000):
+                    # Buscar número telefónico de 10 dígitos en el modal
+                    modal_content = page.locator('div:has-text("Validación automática")').first
+                    modal_text = modal_content.inner_text()
+                    
+                    # Buscar patrón de número telefónico (10 dígitos)
+                    numeros_encontrados = re.findall(r'\b[0-9]{10}\b', modal_text)
+                    if numeros_encontrados:
+                        numero = numeros_encontrados[0]
+                        return "ACTIVA", numero, f"SIM activa con número {numero}"
+            except:
+                pass
             
-            # Si no se encontró información clara
-            return "ERROR", None, "No se pudo determinar el estado de la SIM"
+            # CASO 3: Buscar número telefónico en cualquier parte de la página
+            try:
+                page_content = page.content()
+                # Buscar patrones de número telefónico (10 dígitos que no sean ICCID)
+                numeros_encontrados = re.findall(r'\b[0-9]{10}\b', page_content)
+                if numeros_encontrados:
+                    # Filtrar números que no sean parte del ICCID
+                    for num in numeros_encontrados:
+                        if not num.startswith('895214') and num != ultimos_13_digitos[:10]:
+                            return "ACTIVA", num, f"SIM activa con número {num}"
+            except:
+                pass
+            
+            # Si no se encontró información clara después de esperar
+            return "ERROR", None, "No se pudo determinar el estado de la SIM (timeout o respuesta inesperada)"
             
         except PlaywrightTimeout:
             return "ERROR", None, "Timeout al cargar la página"
