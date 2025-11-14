@@ -1,0 +1,46 @@
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Entornos virtuales
+venv/
+env/
+ENV/
+
+# Archivos de desarrollo
+.env
+.env.local
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Archivos de documentación
+README.md
+INSTRUCCIONES_PASO_A_PASO.md
+GUIA_INSTALACION.md
+RESUMEN_PROYECTO.md
+GUIA_INSTALACION_CONTABO.md
+
+# Scripts de instalación
+install_contabo.sh
+install_contabo_v2.sh
+iniciar.sh
+iniciar.bat
+setup_db.py
+
+# Archivos de ejemplo
+ejemplo_iccids.csv
+ejemplo_iccids.xlsx
+
+# Archivos temporales
+*.zip
+pasted_*.png
+pasted_*.txt
+
+# SQL scripts (ya ejecutados)
+setup_supabase.sql
