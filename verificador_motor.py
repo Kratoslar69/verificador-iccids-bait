@@ -121,9 +121,15 @@ class VerificadorICCID:
                 try:
                     page_text = page.content()
                     
-                    # CASO 1: Verificar si aparece "necesita activarse" (INACTIVA)
-                    if "necesita activarse" in page_text:
-                        print(f"[DEBUG] ✓ Encontrado 'necesita activarse' en intento {intento+1} - ICCID INACTIVA")
+                    # CASO 1: Verificar si aparece el popup de INACTIVA
+                    # Buscar elementos únicos del popup de error/inactiva:
+                    # - Botón "Aceptar" (amarillo)
+                    # - Enlace "btz.mx/whatsappbait"
+                    # - Texto "necesita activarse"
+                    
+                    if ("btz.mx/whatsappbait" in page_text or 
+                        ("Aceptar" in page_text and "necesita activarse" in page_text)):
+                        print(f"[DEBUG] ✓ Popup de INACTIVA detectado en intento {intento+1} (botón Aceptar + whatsapp)")
                         estado_final = "INACTIVA"
                         numero_final = None
                         observaciones_final = "SIM requiere activación"
