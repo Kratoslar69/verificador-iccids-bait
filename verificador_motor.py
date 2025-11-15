@@ -342,8 +342,25 @@ class VerificadorICCID:
                     iccids_bloque = response.data
                     
                     if not iccids_bloque:
-                        print("\n✅ No hay más ICCIDs pendientes")
-                        break
+                        # Verificar si realmente no hay más ICCIDs pendientes
+                        print("\n⚠️ Bloque vacío. Verificando si quedan ICCIDs pendientes...")
+                        
+                        # Contar ICCIDs pendientes reales
+                        count_check = self.supabase.table("verificacion_iccids").select(
+                            "id", count="exact"
+                        ).eq("lote", lote_nombre).eq("estatus", "PENDIENTE").execute()
+                        
+                        pendientes_reales = count_check.count if count_check.count else 0
+                        
+                        print(f"📄 ICCIDs pendientes en BD: {pendientes_reales}")
+                        
+                        if pendientes_reales > 0:
+                            print(f"⚠️ Hay {pendientes_reales} ICCIDs pendientes pero el bloque está vacío. Reintentando en 5s...")
+                            time.sleep(5)
+                            continue  # Reintentar consulta
+                        else:
+                            print("\n✅ Confirmado: No hay más ICCIDs pendientes")
+                            break
                     
                     print(f"✅ Bloque obtenido: {len(iccids_bloque)} ICCIDs")
                     
@@ -428,8 +445,20 @@ class VerificadorICCID:
         
         self.stats["duracion_minutos"] = duracion
         
-        # Marcar proceso como completado
-        self.finalizar_proceso(lote_nombre, "COMPLETADO")
+        # Verificar si realmente se completaron todas las ICCIDs solicitadas
+        count_final = self.supabase.table("verificacion_iccids").select(
+            "id", count="exact"
+        ).eq("lote", lote_nombre).eq("estatus", "PENDIENTE").execute()
+        
+        pendientes_finales = count_final.count if count_final.count else 0
+        
+        if pendientes_finales > 0:
+            print(f"\n⚠️ ADVERTENCIA: Aún quedan {pendientes_finales} ICCIDs pendientes")
+            print(f"📊 Procesadas: {self.stats['procesadas']} de {total_a_procesar} solicitadas")
+            self.finalizar_proceso(lote_nombre, "INCOMPLETO")
+        else:
+            # Marcar proceso como completado
+            self.finalizar_proceso(lote_nombre, "COMPLETADO")
         
         print(f"\n{'='*60}")
         print(f"✅ Verificación completada")

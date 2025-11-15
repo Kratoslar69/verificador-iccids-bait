@@ -44,7 +44,8 @@ COPY requirements.txt .
 
 # Instalar dependencias de Python
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir supervisor
 
 # Instalar Playwright y navegadores
 RUN playwright install chromium && \
@@ -62,5 +63,5 @@ ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 ENV STREAMLIT_SERVER_HEADLESS=true
 ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
-# Comando para ejecutar la aplicación
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+# Comando para ejecutar supervisord (gestiona worker daemon + streamlit)
+CMD ["supervisord", "-c", "supervisord.conf"]

@@ -303,16 +303,37 @@ elif menu_option == "▶️ Verificar ICCIDs":
             )
             
             for proceso in procesos_activos:
-                with st.expander(f"📦 Lote: {proceso['lote']} - Estado: {proceso['estado']}"):
-                    col1, col2, col3, col4 = st.columns(4)
+                # Calcular tiempo transcurrido
+                from datetime import datetime
+                fecha_inicio = datetime.fromisoformat(proceso['fecha_inicio'].replace('Z', '+00:00'))
+                tiempo_transcurrido = datetime.now(fecha_inicio.tzinfo) - fecha_inicio
+                horas = int(tiempo_transcurrido.total_seconds() // 3600)
+                minutos = int((tiempo_transcurrido.total_seconds() % 3600) // 60)
+                segundos = int(tiempo_transcurrido.total_seconds() % 60)
+                tiempo_str = f"{horas}h {minutos}m {segundos}s"
+                
+                # Calcular porcentaje
+                porcentaje = (proceso['progreso_actual'] / proceso['progreso_total'] * 100) if proceso['progreso_total'] > 0 else 0
+                
+                with st.expander(f"📦 Lote: {proceso['lote']} - {proceso['estado']} - {porcentaje:.1f}%", expanded=True):
+                    # Primera fila: Tiempo y progreso
+                    col_time1, col_time2 = st.columns(2)
+                    with col_time1:
+                        st.metric("⏱️ Tiempo Corriendo", tiempo_str)
+                    with col_time2:
+                        st.metric("📈 Progreso", f"{proceso['progreso_actual']:,}/{proceso['progreso_total']:,}")
+                    
+                    # Barra de progreso
+                    st.progress(porcentaje / 100)
+                    
+                    # Segunda fila: Estadísticas
+                    col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("📈 Progreso", f"{proceso['progreso_actual']}/{proceso['progreso_total']}")
+                        st.metric("✅ Activas", f"{proceso['activas']:,}")
                     with col2:
-                        st.metric("✅ Activas", proceso['activas'])
+                        st.metric("⭕ Inactivas", f"{proceso['inactivas']:,}")
                     with col3:
-                        st.metric("⭕ Inactivas", proceso['inactivas'])
-                    with col4:
-                        st.metric("❌ Errores", proceso['errores'])
+                        st.metric("❌ Errores", f"{proceso['errores']:,}")
                     
                     # Botones de control
                     col_btn1, col_btn2, col_btn3 = st.columns(3)
@@ -392,34 +413,50 @@ elif menu_option == "▶️ Verificar ICCIDs":
                     if pendientes == 0:
                         st.warning("⚠️ No hay ICCIDs pendientes en este lote")
                     else:
-                        # Iniciar verificación en background
+                        # Marcar proceso como EJECUTANDO en la base de datos
+                        # El worker daemon lo detectará y comenzará a procesarlo
                         try:
-                            try:
-                                supabase_url = st.secrets["SUPABASE_URL"]
-                                supabase_key = st.secrets["SUPABASE_SERVICE_KEY"]
-                            except:
-                                supabase_url = os.getenv("SUPABASE_URL")
-                                supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+                            # Verificar si ya hay un proceso activo para este lote
+                            response_check = supabase.table("proceso_verificacion").select("*").eq(
+                                "lote", lote_seleccionado
+                            ).in_("estado", ["EJECUTANDO", "PAUSADO"]).execute()
                             
-                            from background_worker import iniciar_verificacion_background
-                            
-                            limite = None if limite_verificacion == 0 else limite_verificacion
-                            
-                            # Iniciar proceso en background
-                            iniciado = iniciar_verificacion_background(
-                                lote_nombre=lote_seleccionado,
-                                limite=limite,
-                                supabase_url=supabase_url,
-                                supabase_key=supabase_key
-                            )
-                            
-                            if iniciado:
-                                st.success("✅ Proceso iniciado en background")
-                                st.info("🔄 El proceso continuará ejecutándose aunque cierres el navegador")
-                                st.info("📊 Puedes ver el progreso en la sección superior o actualizar la página")
-                                st.rerun()
-                            else:
+                            if response_check.data:
                                 st.warning("⚠️ Ya hay un proceso activo para este lote")
+                            else:
+                                # Crear o actualizar proceso como EJECUTANDO
+                                response_exists = supabase.table("proceso_verificacion").select("*").eq(
+                                    "lote", lote_seleccionado
+                                ).execute()
+                                
+                                total_pendientes = pendientes if limite_verificacion == 0 else min(limite_verificacion, pendientes)
+                                
+                                if response_exists.data:
+                                    # Actualizar proceso existente
+                                    supabase.table("proceso_verificacion").update({
+                                        "estado": "EJECUTANDO",
+                                        "progreso_total": total_pendientes,
+                                        "fecha_inicio": datetime.now().isoformat(),
+                                        "fecha_actualizacion": datetime.now().isoformat()
+                                    }).eq("lote", lote_seleccionado).execute()
+                                else:
+                                    # Crear nuevo proceso
+                                    supabase.table("proceso_verificacion").insert({
+                                        "lote": lote_seleccionado,
+                                        "estado": "EJECUTANDO",
+                                        "progreso_actual": 0,
+                                        "progreso_total": total_pendientes,
+                                        "activas": 0,
+                                        "inactivas": 0,
+                                        "errores": 0
+                                    }).execute()
+                                
+                                st.success("✅ Proceso iniciado en background")
+                                st.info("🔄 El worker daemon detectará el proceso y comenzará a procesarlo")
+                                st.info("🔒 El proceso continuará aunque reinicies Streamlit o Railway")
+                                st.info("📊 Puedes ver el progreso en la sección superior")
+                                time.sleep(2)
+                                st.rerun()
                         
                         except Exception as e:
                             st.error(f"❌ Error al iniciar verificación: {e}")
