@@ -372,13 +372,32 @@ elif menu_option == "▶️ Verificar ICCIDs":
     
     # Obtener lotes disponibles
     try:
-        response = supabase.table("verificacion_iccids").select("lote, estatus").execute()
-        df = pd.DataFrame(response.data)
+        # Usar RPC para obtener lotes únicos directamente (evita límite de 1000 registros)
+        response = supabase.rpc('get_lotes_unicos').execute()
         
-        if df.empty:
-            st.warning("⚠️ No hay lotes disponibles. Primero carga un lote de ICCIDs.")
+        if response.data and len(response.data) > 0:
+            lotes_disponibles = sorted([item['lote'] for item in response.data])
         else:
-            lotes_disponibles = df['lote'].unique().tolist()
+            # Fallback: obtener con paginación si RPC no existe
+            all_data = []
+            offset = 0
+            limit = 1000
+            while True:
+                response = supabase.table("verificacion_iccids").select("lote").range(offset, offset + limit - 1).execute()
+                if not response.data:
+                    break
+                all_data.extend(response.data)
+                if len(response.data) < limit:
+                    break
+                offset += limit
+            
+            if not all_data:
+                st.warning("⚠️ No hay lotes disponibles. Primero carga un lote de ICCIDs.")
+                lotes_disponibles = []
+            else:
+                lotes_disponibles = sorted(list(set([r['lote'] for r in all_data])))
+        
+        if lotes_disponibles:
             
             # Formulario de verificación
             with st.form("form_verificar"):
@@ -389,14 +408,17 @@ elif menu_option == "▶️ Verificar ICCIDs":
                 
                 # Mostrar estadísticas del lote
                 if lote_seleccionado:
-                    lote_df = df[df['lote'] == lote_seleccionado]
-                    pendientes = len(lote_df[lote_df['estatus'] == 'PENDIENTE'])
-                    
-                    st.info(f"📊 **ICCIDs pendientes:** {pendientes:,}")
-                    
-                    if pendientes > 0:
-                        tiempo_estimado = (pendientes * 3) / 60
-                        st.info(f"⏱️ **Tiempo estimado:** {tiempo_estimado:.1f} minutos")
+                    # Obtener estadísticas del lote seleccionado
+                    response_stats = supabase.table("verificacion_iccids").select("estatus").eq("lote", lote_seleccionado).execute()
+                    if response_stats.data:
+                        lote_df = pd.DataFrame(response_stats.data)
+                        pendientes = len(lote_df[lote_df['estatus'] == 'PENDIENTE'])
+                        
+                        st.info(f"📊 **ICCIDs pendientes:** {pendientes:,}")
+                        
+                        if pendientes > 0:
+                            tiempo_estimado = (pendientes * 3) / 60
+                            st.info(f"⏱️ **Tiempo estimado:** {tiempo_estimado:.1f} minutos")
                 
                 limite_verificacion = st.number_input(
                     "Límite de ICCIDs a verificar (0 = todas)",
