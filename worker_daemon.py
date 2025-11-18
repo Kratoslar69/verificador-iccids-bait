@@ -35,6 +35,14 @@ class WorkerDaemon:
             logger.error("❌ Faltan credenciales de Supabase")
             sys.exit(1)
         
+        # Obtener lote asignado (opcional)
+        self.lote_asignado = os.getenv("LOTE_ASIGNADO")
+        
+        if self.lote_asignado:
+            logger.info(f"📌 Lote asignado a esta instancia: {self.lote_asignado}")
+        else:
+            logger.info("📌 Sin lote asignado - procesará todos los lotes disponibles")
+        
         self.verificador = VerificadorICCID(self.supabase_url, self.supabase_key)
         self.proceso_actual = None
         
@@ -43,9 +51,15 @@ class WorkerDaemon:
     def buscar_procesos_pendientes(self):
         """Buscar procesos con estado EJECUTANDO en la base de datos"""
         try:
-            response = self.verificador.supabase.table("proceso_verificacion").select("*").eq(
+            query = self.verificador.supabase.table("proceso_verificacion").select("*").eq(
                 "estado", "EJECUTANDO"
-            ).execute()
+            )
+            
+            # Si hay un lote asignado, filtrar solo ese lote
+            if self.lote_asignado:
+                query = query.eq("lote", self.lote_asignado)
+            
+            response = query.execute()
             
             return response.data if response.data else []
         except Exception as e:
@@ -115,7 +129,7 @@ class WorkerDaemon:
                         
                         # Verificar si ya estamos procesando este lote
                         if self.proceso_actual == lote_nombre:
-                            logger.debug(f"⏳ Ya procesando lote: {lote_nombre}")
+                            logger.info(f"⏳ Ya procesando lote: {lote_nombre}")
                             continue
                         
                         # Marcar como proceso actual
@@ -127,7 +141,7 @@ class WorkerDaemon:
                         # Limpiar proceso actual
                         self.proceso_actual = None
                 else:
-                    logger.debug("💤 No hay procesos pendientes")
+                    logger.info("💤 No hay procesos pendientes")
                 
                 # Esperar antes de la siguiente revisión
                 time.sleep(intervalo_revision)
